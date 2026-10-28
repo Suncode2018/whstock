@@ -1,5 +1,4 @@
 'use client';
-
 import React, { useState, useEffect, useRef } from 'react';
 import { useRouter } from 'next/navigation';
 import { 
@@ -11,36 +10,27 @@ import {
   Trash2, 
   Edit3, 
   Search, 
-  CheckCircle2, 
-  AlertTriangle, 
-  Printer, 
   Sparkles, 
   Download, 
   Upload, 
-  Check, 
   LogOut, 
   UserCheck, 
   Smartphone, 
-  Volume2, 
-  Vibrate, 
-  RotateCcw
+  Check
 } from 'lucide-react';
 import * as XLSX from 'xlsx';
-
 interface UserSession {
   id: number;
   username: string;
   fullname: string;
   role: 'admin' | 'staff';
 }
-
 interface ProductMaster {
   barcode: string;
   code: string;
   name: string;
   unit: string;
 }
-
 interface StockCountItem {
   barcode: string;
   code: string;
@@ -49,17 +39,14 @@ interface StockCountItem {
   qty: number;
   lastScanned: string;
 }
-
 export default function StockScannerApp() {
   const router = useRouter();
   const [currentUser, setCurrentUser] = useState<UserSession | null>(null);
   const [activeTab, setActiveTab] = useState<'scanner' | 'admin' | 'summary'>('scanner');
   const [isMounted, setIsMounted] = useState(false);
-
   // Storage
   const [masterList, setMasterList] = useState<ProductMaster[]>([]);
   const [stockCounts, setStockCounts] = useState<Record<string, StockCountItem>>({});
-
   // Handheld Scanner State
   const [barcodeInput, setBarcodeInput] = useState('');
   const [lastScannedItem, setLastScannedItem] = useState<{
@@ -71,10 +58,8 @@ export default function StockScannerApp() {
     isKnown: boolean;
     statusTime: string;
   } | null>(null);
-
   // Quick Preset Add
   const [customAddQty, setCustomAddQty] = useState<number>(1);
-
   // Admin Master State
   const [formBarcode, setFormBarcode] = useState('');
   const [formCode, setFormCode] = useState('');
@@ -82,10 +67,8 @@ export default function StockScannerApp() {
   const [formUnit, setFormUnit] = useState('ชิ้น');
   const [editingBarcode, setEditingBarcode] = useState<string | null>(null);
   const [searchMaster, setSearchMaster] = useState('');
-
   const barcodeInputRef = useRef<HTMLInputElement>(null);
-
-  // Check Login & Load Data
+  // 1. Initial Load & Auth Check
   useEffect(() => {
     setIsMounted(true);
     const sessionStr = localStorage.getItem('whstock_user_session');
@@ -95,53 +78,79 @@ export default function StockScannerApp() {
     }
     const user: UserSession = JSON.parse(sessionStr);
     setCurrentUser(user);
-
     const savedMaster = localStorage.getItem('whstock_master_data_v1');
     const savedCounts = localStorage.getItem('whstock_counts_v1');
-
     if (savedMaster) try { setMasterList(JSON.parse(savedMaster)); } catch {}
     if (savedCounts) try { setStockCounts(JSON.parse(savedCounts)); } catch {}
   }, [router]);
-
+  // 2. Real-time Cross-Window Sync (อัปเดตข้อมูลข้ามหน้าต่างอัตโนมัติทันทีที่ยิงสแกน)
+  useEffect(() => {
+    const handleStorageChange = (e: StorageEvent) => {
+      if (e.key === 'whstock_counts_v1' && e.newValue) {
+        try { setStockCounts(JSON.parse(e.newValue)); } catch {}
+      }
+      if (e.key === 'whstock_master_data_v1' && e.newValue) {
+        try { setMasterList(JSON.parse(e.newValue)); } catch {}
+      }
+    };
+    window.addEventListener('storage', handleStorageChange);
+    // Sync polling fallback ทุก 1 วินาที
+    const syncInterval = setInterval(() => {
+      const latestCountsStr = localStorage.getItem('whstock_counts_v1');
+      const latestMasterStr = localStorage.getItem('whstock_master_data_v1');
+      if (latestCountsStr) {
+        try {
+          const parsedCounts = JSON.parse(latestCountsStr);
+          setStockCounts(prev => {
+            if (JSON.stringify(prev) !== latestCountsStr) return parsedCounts;
+            return prev;
+          });
+        } catch {}
+      }
+      if (latestMasterStr) {
+        try {
+          const parsedMaster = JSON.parse(latestMasterStr);
+          setMasterList(prev => {
+            if (JSON.stringify(prev) !== latestMasterStr) return parsedMaster;
+            return prev;
+          });
+        } catch {}
+      }
+    }, 1000);
+    return () => {
+      window.removeEventListener('storage', handleStorageChange);
+      clearInterval(syncInterval);
+    };
+  }, []);
+  // Save to LocalStorage
   useEffect(() => {
     if (isMounted) localStorage.setItem('whstock_master_data_v1', JSON.stringify(masterList));
   }, [masterList, isMounted]);
-
   useEffect(() => {
     if (isMounted) localStorage.setItem('whstock_counts_v1', JSON.stringify(stockCounts));
   }, [stockCounts, isMounted]);
-
-  // Keep focus on input at all times for Handheld Scanner
+  // Auto-focus input for barcode scanner
   const ensureInputFocus = () => {
     setTimeout(() => {
       barcodeInputRef.current?.focus();
     }, 50);
   };
-
   useEffect(() => {
     ensureInputFocus();
-    const handleDocumentClick = () => ensureInputFocus();
-    document.addEventListener('click', handleDocumentClick);
-    return () => document.removeEventListener('click', handleDocumentClick);
   }, [activeTab]);
-
-  // Sound & Vibration Feedback for Warehouse Handheld
+  // Sound & Vibration Feedback
   const triggerHandheldFeedback = (success: boolean = true) => {
-    // 1. Vibration
     if (typeof window !== 'undefined' && 'vibrate' in navigator) {
       navigator.vibrate(success ? 80 : [150, 80, 150]);
     }
-    // 2. Sound
     try {
       const AudioCtx = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
       const ctx = new AudioCtx();
       if (ctx.state === 'suspended') ctx.resume();
-
       const osc = ctx.createOscillator();
       const gain = ctx.createGain();
       osc.connect(gain);
       gain.connect(ctx.destination);
-
       if (success) {
         osc.frequency.setValueAtTime(1200, ctx.currentTime);
         gain.gain.setValueAtTime(0.2, ctx.currentTime);
@@ -155,18 +164,18 @@ export default function StockScannerApp() {
       }
     } catch {}
   };
-
-  // Process Barcode Scan
+  // Process Scan
   const handleScan = (e?: React.FormEvent) => {
     if (e) e.preventDefault();
     const barcode = barcodeInput.trim();
     if (!barcode) return;
-
-    const product = masterList.find(p => p.barcode === barcode);
+    // โหลด Master Data ตัวล่าสุดเสมอ
+    const currentMasterStr = localStorage.getItem('whstock_master_data_v1');
+    const activeMasterList: ProductMaster[] = currentMasterStr ? JSON.parse(currentMasterStr) : masterList;
+    const product = activeMasterList.find(p => p.barcode === barcode);
     const timeStr = new Date().toLocaleTimeString('th-TH');
     const updated = { ...stockCounts };
     const addQty = customAddQty > 0 ? customAddQty : 1;
-
     if (product) {
       triggerHandheldFeedback(true);
       if (!updated[barcode]) {
@@ -181,7 +190,6 @@ export default function StockScannerApp() {
       }
       updated[barcode].qty += addQty;
       updated[barcode].lastScanned = timeStr;
-
       setLastScannedItem({
         barcode: product.barcode,
         code: product.code,
@@ -205,7 +213,6 @@ export default function StockScannerApp() {
       }
       updated[barcode].qty += addQty;
       updated[barcode].lastScanned = timeStr;
-
       setLastScannedItem({
         barcode,
         code: 'UNREGISTERED',
@@ -216,13 +223,12 @@ export default function StockScannerApp() {
         statusTime: timeStr
       });
     }
-
     setStockCounts(updated);
+    localStorage.setItem('whstock_counts_v1', JSON.stringify(updated));
     setBarcodeInput('');
-    setCustomAddQty(1); // Reset back to +1
+    setCustomAddQty(1);
     ensureInputFocus();
   };
-
   const adjustLastItemQty = (delta: number) => {
     if (!lastScannedItem) return;
     const barcode = lastScannedItem.barcode;
@@ -236,41 +242,43 @@ export default function StockScannerApp() {
         setLastScannedItem({ ...lastScannedItem, qty: updated[barcode].qty });
       }
       setStockCounts(updated);
+      localStorage.setItem('whstock_counts_v1', JSON.stringify(updated));
     }
   };
-
   const handleLogout = () => {
     localStorage.removeItem('whstock_user_session');
     router.push('/login');
   };
-
-  // Admin Master handlers
+  // Master Data handlers
   const handleSaveMaster = (e: React.FormEvent) => {
     e.preventDefault();
     if (!formBarcode || !formCode || !formName) return;
+    let updatedMaster = [...masterList];
     if (editingBarcode) {
-      setMasterList(prev => prev.map(item => item.barcode === editingBarcode ? { barcode: formBarcode, code: formCode, name: formName, unit: formUnit } : item));
+      updatedMaster = updatedMaster.map(item => item.barcode === editingBarcode ? { barcode: formBarcode, code: formCode, name: formName, unit: formUnit } : item);
       alert('อัปเดตข้อมูลสำเร็จ!');
     } else {
-      if (masterList.some(item => item.barcode === formBarcode)) return alert('บาร์โค้ดนี้มีอยู่ในระบบแล้ว');
-      setMasterList(prev => [...prev, { barcode: formBarcode, code: formCode, name: formName, unit: formUnit }]);
+      if (updatedMaster.some(item => item.barcode === formBarcode)) return alert('บาร์โค้ดนี้มีอยู่ในระบบแล้ว');
+      updatedMaster.push({ barcode: formBarcode, code: formCode, name: formName, unit: formUnit });
       alert('เพิ่มสินค้าสำเร็จ!');
     }
+    setMasterList(updatedMaster);
+    localStorage.setItem('whstock_master_data_v1', JSON.stringify(updatedMaster));
     setFormBarcode(''); setFormCode(''); setFormName(''); setEditingBarcode(null);
   };
-
   const loadDemoData = () => {
-    setMasterList([
+    const demo = [
       { barcode: "885012345001", code: "SKU-001", name: "สมุดโน้ตปกแข็ง A5 ตารางกริด", unit: "เล่ม" },
       { barcode: "885012345002", code: "SKU-002", name: "ปากกาหมึกเจล 0.5 มม. สีน้ำเงิน", unit: "ด้าม" },
       { barcode: "885012345003", code: "SKU-003", name: "ปากกาหมึกเจล 0.5 มม. สีแดง", unit: "ด้าม" },
-      { barcode: "885012345004", code: "SKU-004", name: "กระดาษถ่ายเอกสาร A4 80 แกรม (500 แผ่น)", unit: "รีม" },
+      { barcode: "885012345004", code: "SKU-004", name: "กระดาษถ่ายเอกสาร A4 80 แกรม", unit: "รีม" },
       { barcode: "885012345005", code: "SKU-005", name: "คลิปหนีบกระดาษสีดำ เบอร์ 111", unit: "กล่อง" },
       { barcode: "885012345006", code: "SKU-006", name: "เทปใสปิดกล่อง 2 นิ้ว 100 หลา", unit: "ม้วน" }
-    ]);
+    ];
+    setMasterList(demo);
+    localStorage.setItem('whstock_master_data_v1', JSON.stringify(demo));
     alert('โหลดข้อมูลตัวอย่างสำเร็จ!');
   };
-
   const exportStockReportExcel = () => {
     const list = Object.values(stockCounts);
     if (list.length === 0) return alert('ยังไม่มีข้อมูลการตรวจนับสต๊อก');
@@ -287,12 +295,16 @@ export default function StockScannerApp() {
     XLSX.utils.book_append_sheet(wb, ws, "StockCount");
     XLSX.writeFile(wb, `StockCount_${new Date().toISOString().slice(0, 10)}.xlsx`);
   };
-
+  const clearAllCounts = () => {
+    if (confirm('ยืนยันล้างข้อมูลสต๊อกทั้งหมด?')) {
+      setStockCounts({});
+      localStorage.removeItem('whstock_counts_v1');
+      setLastScannedItem(null);
+    }
+  };
   const scannedList = Object.values(stockCounts);
   const totalQtyCounted = scannedList.reduce((sum, item) => sum + item.qty, 0);
-
   if (!isMounted || !currentUser) return null;
-
   // =========================================================================
   // VIEW: สำหรับ STAFF บนเครื่อง HANDHELD โดยเฉพาะ (Optimized for PDA 4-5.5")
   // =========================================================================
@@ -316,7 +328,6 @@ export default function StockScannerApp() {
             <LogOut className="w-3.5 h-3.5" /> ออก
           </button>
         </header>
-
         {/* Hidden Auto-Focus Input for Handheld Gun */}
         <form onSubmit={handleScan} className="px-3 pt-3">
           <div className="relative">
@@ -336,8 +347,7 @@ export default function StockScannerApp() {
             </button>
           </div>
         </form>
-
-        {/* Quick Add Presets (ปุ่มเพิ่มทีละแพ็คสำหรับ Handheld) */}
+        {/* Quick Add Presets */}
         <div className="px-3 pt-2 flex items-center gap-1.5 overflow-x-auto text-xs">
           <span className="text-[10px] text-slate-400 font-bold whitespace-nowrap">บวกด่วน:</span>
           {[1, 5, 10, 12, 24, 50].map((num) => (
@@ -355,8 +365,7 @@ export default function StockScannerApp() {
             </button>
           ))}
         </div>
-
-        {/* HERO DISPLAY: สินค้าที่เพิ่งสแกนล่าสุด (ขนาดใหญ่พิเศษ) */}
+        {/* HERO DISPLAY: สินค้าที่เพิ่งสแกนล่าสุด */}
         <div className="p-3 flex-1 flex flex-col justify-center">
           {lastScannedItem ? (
             <div className={`p-4 rounded-2xl border-2 flex flex-col justify-between shadow-2xl transition-all ${
@@ -365,17 +374,15 @@ export default function StockScannerApp() {
                 : 'bg-gradient-to-b from-slate-800 to-slate-850 border-amber-500'
             }`}>
               
-              {/* Product Info */}
               <div>
                 <div className="flex justify-between items-center mb-1">
                   <span className={`text-[11px] font-bold px-2 py-0.5 rounded-full ${
                     lastScannedItem.isKnown ? 'bg-emerald-950 text-emerald-400 border border-emerald-800' : 'bg-amber-950 text-amber-400 border border-amber-800'
                   }`}>
-                    {lastScannedItem.isKnown ? '✓ พบข้อมูล' : '⚠️ นอกระบบ'}
+                    {lastScannedItem.isKnown ? '✓ พบข้อมูล' : '⚠️ นอก Master Data'}
                   </span>
                   <span className="text-[10px] text-slate-400 font-mono">{lastScannedItem.statusTime}</span>
                 </div>
-
                 <h2 className="text-lg font-black text-white leading-tight line-clamp-2 mt-1">
                   {lastScannedItem.name}
                 </h2>
@@ -385,8 +392,7 @@ export default function StockScannerApp() {
                   <span>บาร์โค้ด: <strong className="text-slate-200">{lastScannedItem.barcode}</strong></span>
                 </div>
               </div>
-
-              {/* JUMBO QUANTITY DISPLAY */}
+              {/* JUMBO QUANTITY */}
               <div className="my-4 py-4 bg-slate-950 rounded-2xl border border-slate-700/80 text-center flex flex-col items-center justify-center">
                 <span className="text-xs text-slate-400 font-bold uppercase tracking-wider">ยอดรวมสต๊อกที่นับได้</span>
                 <div className="flex items-baseline justify-center gap-2 mt-1">
@@ -398,8 +404,7 @@ export default function StockScannerApp() {
                   </span>
                 </div>
               </div>
-
-              {/* Jumbo Touch Controls (+ / - ขนาดใหญ่นิ้วโป้งกดง่าย) */}
+              {/* Jumbo Touch Controls */}
               <div className="grid grid-cols-2 gap-3">
                 <button
                   type="button"
@@ -416,10 +421,8 @@ export default function StockScannerApp() {
                   + 1
                 </button>
               </div>
-
             </div>
           ) : (
-            /* Standby Card */
             <div className="p-8 rounded-2xl bg-slate-800/80 border-2 border-dashed border-slate-700 text-center flex flex-col items-center justify-center">
               <div className="w-16 h-16 rounded-full bg-indigo-950 border border-indigo-700 flex items-center justify-center mb-3 animate-pulse">
                 <Barcode className="w-8 h-8 text-indigo-400" />
@@ -429,7 +432,6 @@ export default function StockScannerApp() {
             </div>
           )}
         </div>
-
         {/* Bottom Shift Stats Bar */}
         <div className="px-3 pt-1">
           <div className="bg-slate-800 border border-slate-700 p-2.5 rounded-xl flex justify-between items-center text-xs">
@@ -444,13 +446,11 @@ export default function StockScannerApp() {
             </div>
           </div>
         </div>
-
       </div>
     );
   }
-
   // =========================================================================
-  // VIEW: สำหรับ ADMIN บนคอมพิวเตอร์ Desktop/Tablet (จัดการ Master Data & Full Options)
+  // VIEW: สำหรับ ADMIN บนคอมพิวเตอร์ Desktop/Tablet (จัดการ Master Data & Real-time Monitor)
   // =========================================================================
   return (
     <div className="min-h-screen bg-slate-100 text-slate-800 flex flex-col font-sans">
@@ -462,10 +462,9 @@ export default function StockScannerApp() {
             <Boxes className="w-8 h-8 text-amber-300" />
             <div>
               <h1 className="text-xl font-bold tracking-wide">WH Stock System (Admin)</h1>
-              <p className="text-xs text-indigo-200">จัดการข้อมูล Master Data และภาพรวมสต๊อกสินค้า</p>
+              <p className="text-xs text-indigo-200">จัดการข้อมูล Master Data และดูยอดสต๊อก Real-time</p>
             </div>
           </div>
-
           <div className="flex items-center gap-3">
             <div className="flex items-center gap-2 bg-indigo-800/80 px-3 py-1.5 rounded-xl text-xs">
               <UserCheck className="w-4 h-4 text-amber-400" />
@@ -482,7 +481,6 @@ export default function StockScannerApp() {
             </button>
           </div>
         </div>
-
         {/* Tab Navigation */}
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 pb-3">
           <nav className="flex space-x-1 bg-indigo-800/60 p-1 rounded-xl w-fit">
@@ -492,7 +490,7 @@ export default function StockScannerApp() {
                 activeTab === 'scanner' ? 'bg-white text-indigo-800 shadow' : 'text-indigo-100 hover:text-white'
               }`}
             >
-              <Barcode className="w-4 h-4" /> ตรวจนับสต๊อก
+              <Barcode className="w-4 h-4" /> สแกนนับสต๊อก
             </button>
             <button
               onClick={() => setActiveTab('admin')}
@@ -513,18 +511,16 @@ export default function StockScannerApp() {
           </nav>
         </div>
       </header>
-
       {/* Main Admin Content */}
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-6 flex-1 w-full space-y-6">
         
-        {/* ================= TAB 1: SCANNER (Desktop Version) ================= */}
+        {/* ================= TAB 1: SCANNER ================= */}
         {activeTab === 'scanner' && (
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
             <div className="lg:col-span-2 bg-white p-6 rounded-2xl shadow-sm border border-slate-200">
               <h2 className="text-lg font-bold text-slate-800 flex items-center gap-2 mb-4">
                 <Barcode className="w-5 h-5 text-indigo-600" /> สแกนบาร์โค้ดนับสต๊อกสินค้า
               </h2>
-
               <form onSubmit={handleScan} className="space-y-4">
                 <div className="relative">
                   <Barcode className="w-6 h-6 absolute left-4 top-3.5 text-slate-400" />
@@ -544,7 +540,6 @@ export default function StockScannerApp() {
                   </button>
                 </div>
               </form>
-
               {lastScannedItem && (
                 <div className={`mt-5 p-4 rounded-xl border flex justify-between items-center ${
                   lastScannedItem.isKnown ? 'border-emerald-200 bg-emerald-50 text-emerald-900' : 'border-amber-300 bg-amber-50 text-amber-900'
@@ -560,25 +555,30 @@ export default function StockScannerApp() {
                 </div>
               )}
             </div>
-
-            {/* Quick Stat */}
+            {/* Quick Stat Counter */}
             <div className="bg-white p-5 rounded-2xl shadow-sm border border-slate-200 space-y-4">
-              <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-wider">สรุปการนับปัจจุบัน</h3>
+              <div className="flex justify-between items-center">
+                <h3 className="text-xs font-semibold text-slate-500 uppercase tracking-wider">สรุปการนับปัจจุบัน (Real-time)</h3>
+                <span className="inline-flex items-center gap-1 text-[11px] font-bold text-emerald-600 bg-emerald-50 px-2 py-0.5 rounded-full border border-emerald-200">
+                  ● Sync อัตโนมัติ
+                </span>
+              </div>
               <div className="grid grid-cols-2 gap-3">
                 <div className="bg-indigo-50 p-4 rounded-xl text-center">
                   <p className="text-xs text-indigo-600 font-semibold">รายการที่สแกน</p>
                   <p className="text-3xl font-extrabold text-indigo-900 mt-1">{scannedList.length}</p>
+                  <p className="text-[11px] text-slate-500">SKU</p>
                 </div>
                 <div className="bg-emerald-50 p-4 rounded-xl text-center">
                   <p className="text-xs text-emerald-600 font-semibold">ยอดรวมชิ้น</p>
                   <p className="text-3xl font-extrabold text-emerald-900 mt-1">{totalQtyCounted}</p>
+                  <p className="text-[11px] text-slate-500">ชิ้น</p>
                 </div>
               </div>
             </div>
           </div>
         )}
-
-        {/* ================= TAB 2: MASTER DATA (Admin Only) ================= */}
+        {/* ================= TAB 2: MASTER DATA ================= */}
         {activeTab === 'admin' && (
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
             <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200">
@@ -631,13 +631,12 @@ export default function StockScannerApp() {
                 </div>
                 <button
                   type="submit"
-                  className="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-semibold py-2.5 rounded-xl transition"
+                  className="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-semibold py-2.5 rounded-xl transition flex items-center justify-center gap-1"
                 >
-                  {editingBarcode ? 'อัปเดตข้อมูล' : 'บันทึก Master Data'}
+                  <Check className="w-4 h-4" /> {editingBarcode ? 'อัปเดตข้อมูล' : 'บันทึก Master Data'}
                 </button>
               </form>
             </div>
-
             <div className="lg:col-span-2 space-y-4">
               <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200 flex flex-wrap gap-3">
                 <button
@@ -647,7 +646,6 @@ export default function StockScannerApp() {
                   <Sparkles className="w-4 h-4" /> โหลดข้อมูลตัวอย่าง (Demo Data)
                 </button>
               </div>
-
               {/* Master Table */}
               <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
                 <div className="px-6 py-4 border-b flex justify-between items-center">
@@ -688,23 +686,29 @@ export default function StockScannerApp() {
             </div>
           </div>
         )}
-
         {/* ================= TAB 3: SUMMARY & EXPORT ================= */}
         {activeTab === 'summary' && (
           <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200 space-y-4">
             <div className="flex justify-between items-center">
               <div>
-                <h2 className="text-xl font-bold text-slate-800">รายงานสรุปการตรวจนับสต๊อก</h2>
-                <p className="text-xs text-slate-500">ส่งออกข้อมูลเป็น Excel สำหรับระบบบัญชีหรือ ERP</p>
+                <h2 className="text-xl font-bold text-slate-800">รายงานสรุปการตรวจนับสต๊อก (Real-time Live)</h2>
+                <p className="text-xs text-slate-500">ข้อมูลอัปเดตตรงกับเครื่อง Handheld ตลอดเวลา</p>
               </div>
-              <button
-                onClick={exportStockReportExcel}
-                className="bg-emerald-600 hover:bg-emerald-700 text-white font-semibold text-sm px-5 py-2.5 rounded-xl shadow-sm transition flex items-center gap-2"
-              >
-                <FileSpreadsheet className="w-4 h-4" /> Export สรุปสต๊อก (.xlsx)
-              </button>
+              <div className="flex gap-2">
+                <button
+                  onClick={exportStockReportExcel}
+                  className="bg-emerald-600 hover:bg-emerald-700 text-white font-semibold text-sm px-4 py-2 rounded-xl shadow-sm transition flex items-center gap-2"
+                >
+                  <FileSpreadsheet className="w-4 h-4" /> Export สรุปสต๊อก (.xlsx)
+                </button>
+                <button
+                  onClick={clearAllCounts}
+                  className="text-xs text-rose-600 hover:bg-rose-50 px-3 py-2 rounded-xl border border-rose-200 transition"
+                >
+                  <Trash2 className="w-3.5 h-3.5 inline mr-1" /> ล้างยอดนับรอบนี้
+                </button>
+              </div>
             </div>
-
             <div className="overflow-x-auto">
               <table className="w-full text-left text-sm text-slate-600">
                 <thead className="bg-slate-50 text-slate-700 font-semibold text-xs border-b">
@@ -718,22 +722,27 @@ export default function StockScannerApp() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-100">
-                  {scannedList.map((item, idx) => (
-                    <tr key={item.barcode} className="hover:bg-slate-50">
-                      <td className="px-4 py-3 font-mono text-xs text-slate-400">{idx + 1}</td>
-                      <td className="px-4 py-3 font-mono font-bold text-slate-800">{item.barcode}</td>
-                      <td className="px-4 py-3 font-mono text-xs text-slate-600">{item.code}</td>
-                      <td className="px-4 py-3 font-medium text-slate-800">{item.name}</td>
-                      <td className="px-4 py-3 text-center font-bold text-indigo-700">{item.qty} {item.unit}</td>
-                      <td className="px-4 py-3 text-xs text-slate-400">{item.lastScanned}</td>
+                  {scannedList.length === 0 ? (
+                    <tr>
+                      <td colSpan={6} className="text-center py-8 text-slate-400">ยังไม่มีรายการสต๊อกที่ตรวจนับ</td>
                     </tr>
-                  ))}
+                  ) : (
+                    scannedList.map((item, idx) => (
+                      <tr key={item.barcode} className="hover:bg-slate-50">
+                        <td className="px-4 py-3 font-mono text-xs text-slate-400">{idx + 1}</td>
+                        <td className="px-4 py-3 font-mono font-bold text-slate-800">{item.barcode}</td>
+                        <td className="px-4 py-3 font-mono text-xs text-slate-600">{item.code}</td>
+                        <td className="px-4 py-3 font-medium text-slate-800">{item.name}</td>
+                        <td className="px-4 py-3 text-center font-bold text-base text-indigo-700">{item.qty} {item.unit}</td>
+                        <td className="px-4 py-3 text-xs text-slate-400">{item.lastScanned}</td>
+                      </tr>
+                    ))
+                  )}
                 </tbody>
               </table>
             </div>
           </div>
         )}
-
       </main>
     </div>
   );
