@@ -1,0 +1,18 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = "file:./dev.db"
+}
+
+// ตารางข้อมูลผู้ใช้งาน
+model tblusers {
+  id         Int      @id @default(autoincrement())
+  username   String   @unique
+  password   String
+  fullname   String
+  role       String   @default("staff") // 'admin' | 'staff'
+  created_at DateTime @default(now())
+}
